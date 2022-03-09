@@ -1,0 +1,42 @@
+#!/bin/bash 
+#
+# name: unattended-flatpak-upgrades
+#
+# desc: auto updates installed flatpak apps, 
+#       which dont have remote permission changes
+#
+# deps: flatpak,tail,mktemp,crudini,echo,rm 
+#
+# usage: cronjob
+# 
+flatpak list --app --columns=application,origin | tail -n+2 | 
+{
+    # temp files
+    META_LOCAL=$(mktemp)
+    META_REMOTE=$(mktemp)
+    CHANGE=$(mktemp)
+
+    while read APPID ORIGIN; do
+
+        # get meta infos
+        flatpak info -m $APPID > $META_LOCAL
+        flatpak remote-info --show-metadata $ORIGIN $APPID > $META_REMOTE
+
+        # compare metas
+        diff -y -w -B <(crudini --get --format=lines $META_LOCAL|sort) \
+             <(crudini --get --format=lines $META_REMOTE  | sort) 2>&1 > $CHANGE
+        RET=$?
+
+        # auto update or notify 
+        if [ $RET -eq 0 ];then
+            echo "$APPID no permission change detected ... starting auto update"
+            flatpak update --noninteractive --app $APPID >/dev/null
+        else
+            echo "$APPID has remote permission changes. To resolve run  'flatpak update --app $APPID'" 
+            #cat $CHANGE
+        fi
+    done
+
+    # cleanup 
+    rm -f $META_LOCAL $META_REMOTE $CHANGE
+}
