@@ -2,23 +2,24 @@
 
 # -----------------------------------------------------------------------------
 # DESCRIPTION: 
+# -----------------------------------------------------------------------------
 # auto updates flatpak apps which dont have remote permission 
 # changes without having to worry about remote permission changes getting 
 # deployed without a users knowledge
-# -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
+# CONFIGURATION PARAMETERS: 
+# -----------------------------------------------------------------------------
+# SCRIPTNAME=$(basename ${BASH_SOURCE[0]})
 SCRIPTNAME=unattended-flatpak-upgrades
 LOGDIR=~/.logs
-#SCRIPTNAME=$(basename ${BASH_SOURCE[0]})
-# -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
 # TODOS: 
+# -----------------------------------------------------------------------------
 # - exclude none security relevant parts of the metadata from the comparison 
 # - maybe replace crudini with something smaller
 # - add notification (for example via notify-send) when available
-# -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
 # Check dependencies 
@@ -39,7 +40,6 @@ fi
 mkdir -p $LOGDIR >/dev/null 2>&1
 exec &> >(tee -a $LOGDIR/$SCRIPTNAME)
 exec 2>&1
-
 
 # -----------------------------------------------------------------------------
 # M A I N  
@@ -72,16 +72,15 @@ flatpak list --app --columns=application,origin | tail -n+2 |
          else
             cat $DIFF
             echo "$APPID has changes, resolve via 'flatpak update $APPID'"
-            # notify-send 
+            # send notification
         fi
     done
 
     # remove temporary files
     rm -f $LOCAL $REMOTE $DIFF
 }
-
+# 
 echo "$(date +%F_%R) done"
 # -----------------------------------------------------------------------------
 # E O F 
 # -----------------------------------------------------------------------------
-
