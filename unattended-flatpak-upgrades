@@ -3,30 +3,75 @@
 # -----------------------------------------------------------------------------
 # DESCRIPTION: 
 # -----------------------------------------------------------------------------
-# auto updates flatpak apps which dont have remote permission 
-# changes without having to worry about remote permission changes getting 
-# deployed without a users knowledge
+# auto updates flatpak apps which dont have remote permission changes so the 
+# user doenst have to worry about an app aquiring addional permission without 
+# his knowlege and explicit consent
 
 # -----------------------------------------------------------------------------
 # CONFIGURATION PARAMETERS: 
 # -----------------------------------------------------------------------------
-# SCRIPTNAME=$(basename ${BASH_SOURCE[0]})
-SCRIPTNAME=unattended-flatpak-upgrades
-LOGDIR=~/.logs
+LOGFILE=$(basename ${BASH_SOURCE[0]}) # same name as script (no ext)
+LOGDIR=~/.logs   # will be created if necessary 
+DEBUG=0          # on:1 and off:0
 
 # -----------------------------------------------------------------------------
-# TODOS: 
+# OPEN TODOS: 
 # -----------------------------------------------------------------------------
-# - exclude none security relevant parts of the metadata from the comparison 
-# - maybe replace crudini with something smaller
-# - add notification (for example via notify-send) when available
+# - replace crudini with something lighter
 
 # -----------------------------------------------------------------------------
-# Check dependencies 
+# Temp Files
 # -----------------------------------------------------------------------------
+LOCAL=$(mktemp)
+REMOTE=$(mktemp)
+DIFF=$(mktemp)
 
+# -----------------------------------------------------------------------------
+# define cleanup handler 
+# -----------------------------------------------------------------------------
+function cleanup {
+    rm -f $LOCAL $REMOTE $DIFF
+    echo "$(date +%F_%R) done"
+}
+
+# -----------------------------------------------------------------------------
+# filter harmless metadata 
+# -----------------------------------------------------------------------------
+function filter_harmless() {
+    cat /dev/stdin | {
+        # ref. https://www.man7.org/linux/man-pages/man5/flatpak-metadata.5.html
+        declare -a harmless=("Extra Data" "Application" "Runtime" "Instance" )
+        while read line;do
+            isHarmless=0
+            ## now loop through the above array
+            for i in "${harmless[@]}";do
+                # check if line matches pattern
+                echo "$line" | grep "^\[ $i \] " >/dev/null
+                RET=$?
+                # 1 <=> no match => output
+                if [ $RET -eq 0 ];then
+                    isHarmless=1
+                    break;
+                fi
+            done
+            #echo $isHarmless $line
+            if [ $isHarmless -eq 0 ];then
+                echo $line
+            fi
+        done
+    }
+}
+
+# -----------------------------------------------------------------------------
+# register cleanup handler 
+# -----------------------------------------------------------------------------
+trap cleanup EXIT;
+
+# -----------------------------------------------------------------------------
+# check required dependencies 
+# -----------------------------------------------------------------------------
 MISSING_BIN=0
-for bin in flatpak tail mktemp mkdir crudini tee echo rm basename;do
+for bin in flatpak tail mktemp mkdir crudini tee grep echo rm basename;do
 	type "$bin" >/dev/null 2>&1 || { echo "ERR: missing $bin"; MISSING_BIN=1; }
 done
 if [ $MISSING_BIN -ne 0 ];then
@@ -34,53 +79,71 @@ if [ $MISSING_BIN -ne 0 ];then
 fi
 
 # -----------------------------------------------------------------------------
-# Redirect output to file
+# check extra dependencies
 # -----------------------------------------------------------------------------
+NOTIFY_SEND=$(which notify-send)
 
+# -----------------------------------------------------------------------------
+# clone and redirect output
+# -----------------------------------------------------------------------------
 mkdir -p $LOGDIR >/dev/null 2>&1
-exec &> >(tee -a $LOGDIR/$SCRIPTNAME)
+exec &> >(tee -a $LOGDIR/$LOGFILE)
 exec 2>&1
 
 # -----------------------------------------------------------------------------
 # M A I N  
 # -----------------------------------------------------------------------------
-
 echo "$(date +%F_%R) started"
 
 flatpak list --app --columns=application,origin | tail -n+2 | 
 {
-    # temp files
-    LOCAL=$(mktemp)
-    REMOTE=$(mktemp)
-    DIFF=$(mktemp)
 
     while read APPID ORIGIN; do
 
-        # get local and remote meta
-        flatpak info -m $APPID > $LOCAL
-        flatpak remote-info --show-metadata $ORIGIN $APPID > $REMOTE
+        # get local meta 
+        flatpak info -m $APPID \
+            | crudini --get --format=lines - \
+            | filter_harmless \
+            |sort > $LOCAL
+
+        if [ $DEBUG -ne 0 ];then
+            echo "LOCAL: " 
+            cat $LOCAL
+        fi
+
+        # get remote meta
+        flatpak remote-info --show-metadata $ORIGIN $APPID \
+            | crudini --get --format=lines - \
+            | filter_harmless \
+            | sort > $REMOTE
+
+        if [ $DEBUG -ne 0 ];then
+            echo "REMOTE: " 
+            cat $REMOTE
+        fi
 
         # compare metas
-        diff -y -w -B <(crudini --get --format=lines $LOCAL|sort) \
-            <(crudini --get --format=lines $REMOTE  | sort) 2>&1 > $DIFF
+        diff -y -w -B  $LOCAL $REMOTE 2>&1 > $DIFF
         RET=$?
 
-        # auto update or delay/notify
+        # auto update or skip update and log+notify 
         if [ $RET -eq 0 ];then
-            #echo "$APPID no change detected ... starting update"
+            if [ $DEBUG -ne 0 ];then
+                echo "$APPID has no permission changes, auto updating"
+            fi
             flatpak update --noninteractive --app $APPID >/dev/null
          else
+            MSG="$APPID has permission changes, resolve via 'flatpak update $APPID'"
             cat $DIFF
-            echo "$APPID has changes, resolve via 'flatpak update $APPID'"
-            # send notification
+            echo "$MSG"
+            if [ ! "$NOTIFY_SEND" = "" ];then 
+                # send notification
+                $NOTIFY_SEND "flatpak: $APPID" "$MSG"
+            fi
         fi
     done
 
-    # remove temporary files
-    rm -f $LOCAL $REMOTE $DIFF
 }
-# 
-echo "$(date +%F_%R) done"
 # -----------------------------------------------------------------------------
-# E O F 
+# E O F
 # -----------------------------------------------------------------------------
