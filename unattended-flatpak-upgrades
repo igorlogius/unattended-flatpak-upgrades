@@ -12,10 +12,10 @@
 # -----------------------------------------------------------------------------
 LOGFILE=$(basename ${BASH_SOURCE[0]}) # same name as script (no ext)
 LOGDIR=~/.logs   # will be created if necessary 
-DEBUG=0          # on:1 and off:0
+DEBUG=0          # show a bit more info values: on:1 and off:0
 
 # -----------------------------------------------------------------------------
-# OPEN TODOS: 
+# OPEN TODOS:
 # -----------------------------------------------------------------------------
 # - replace crudini with something lighter
 
@@ -27,11 +27,26 @@ REMOTE=$(mktemp)
 DIFF=$(mktemp)
 
 # -----------------------------------------------------------------------------
+# define help to source some files 
+# -----------------------------------------------------------------------------
+function source_if_exists {
+    while [ $# -gt 0 ];do
+        if [[ -r $1 ]] ;then
+            if [ $DEBUG -ne 0 ];then
+                echo "DEBUG: loading env from $1"
+            fi
+            source $1
+        fi
+        shift
+    done
+}
+
+# -----------------------------------------------------------------------------
 # define cleanup handler 
 # -----------------------------------------------------------------------------
 function cleanup {
     rm -f $LOCAL $REMOTE $DIFF
-    echo "$(date +%F_%R) done"
+    echo "INFO: $(date +%F_%R) done"
 }
 
 # -----------------------------------------------------------------------------
@@ -72,10 +87,10 @@ trap cleanup EXIT;
 # -----------------------------------------------------------------------------
 MISSING_BIN=0
 for bin in flatpak tail mktemp mkdir crudini tee grep echo rm basename;do
-	type "$bin" >/dev/null 2>&1 || { echo "ERR: missing $bin"; MISSING_BIN=1; }
+	type "$bin" >/dev/null 2>&1 || { echo "ERROR: missing $bin"; MISSING_BIN=1; }
 done
 if [ $MISSING_BIN -ne 0 ];then
-	echo "ERR: aborting ... "
+	echo "ERROR: aborting because of missing dependencies"
 fi
 
 # -----------------------------------------------------------------------------
@@ -91,36 +106,32 @@ exec &> >(tee -a $LOGDIR/$LOGFILE)
 exec 2>&1
 
 # -----------------------------------------------------------------------------
+# Load some environments so flatpak does not miss the XDG_* paths
+# -----------------------------------------------------------------------------
+source_if_exists  /etc/profile  ~/.bash_profile  ~/.bashrc
+
+# -----------------------------------------------------------------------------
 # M A I N  
 # -----------------------------------------------------------------------------
-echo "$(date +%F_%R) started"
+echo "INFO: $(date +%F_%R) started"
 
-flatpak list --app --columns=application,origin | tail -n+2 | 
+
+flatpak --user list --app --columns=application,origin | tail -n+2 | 
 {
 
     while read APPID ORIGIN; do
 
         # get local meta 
-        flatpak info -m $APPID \
+        flatpak --user info -m $APPID \
             | crudini --get --format=lines - \
             | filter_harmless \
             |sort > $LOCAL
-
-        if [ $DEBUG -ne 0 ];then
-            echo "LOCAL: " 
-            cat $LOCAL
-        fi
 
         # get remote meta
         flatpak remote-info --show-metadata $ORIGIN $APPID \
             | crudini --get --format=lines - \
             | filter_harmless \
             | sort > $REMOTE
-
-        if [ $DEBUG -ne 0 ];then
-            echo "REMOTE: " 
-            cat $REMOTE
-        fi
 
         # compare metas
         diff -y -w -B  $LOCAL $REMOTE 2>&1 > $DIFF
@@ -129,11 +140,11 @@ flatpak list --app --columns=application,origin | tail -n+2 |
         # auto update or skip update and log+notify 
         if [ $RET -eq 0 ];then
             if [ $DEBUG -ne 0 ];then
-                echo "$APPID has no permission changes, auto updating"
+                echo "DEBUG: $APPID has no permission changes, auto updating"
             fi
             flatpak update --noninteractive --app $APPID >/dev/null
          else
-            MSG="$APPID has permission changes, resolve via 'flatpak update $APPID'"
+            MSG="INFO: $APPID has permission changes, resolve via 'flatpak --user update $APPID'"
             cat $DIFF
             echo "$MSG"
             if [ ! "$NOTIFY_SEND" = "" ];then 
