@@ -116,7 +116,7 @@ source_if_exists  /etc/profile  ~/.bash_profile  ~/.bashrc
 echo "INFO: $(date +%F_%R) started"
 
 
-flatpak --user list --app --columns=application,origin | tail -n+2 | 
+flatpak remote-ls --updates --app --columns=application,origin | tail -n+1 | 
 {
 
     while read APPID ORIGIN; do
