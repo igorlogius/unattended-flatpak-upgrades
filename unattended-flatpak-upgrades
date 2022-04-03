@@ -108,7 +108,7 @@ exec 2>&1
 # -----------------------------------------------------------------------------
 # Load some environments so flatpak does not miss the XDG_* paths
 # -----------------------------------------------------------------------------
-source_if_exists  /etc/profile  ~/.bash_profile  ~/.bashrc
+source_if_exists  /etc/profile   
 
 # -----------------------------------------------------------------------------
 # M A I N  
