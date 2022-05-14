@@ -4,7 +4,7 @@
 # DESCRIPTION: 
 # -----------------------------------------------------------------------------
 # auto updates flatpak apps which dont have remote permission changes so the 
-# user doenst have to worry about an app aquiring addional permission without 
+# user doenst have to worry about an app aquiring additional permissions without 
 # his knowlege and explicit consent
 
 # -----------------------------------------------------------------------------
@@ -13,11 +13,33 @@
 LOGFILE=$(basename ${BASH_SOURCE[0]}) # same name as script (no ext)
 LOGDIR=~/.logs   # will be created if necessary 
 DEBUG=0          # show a bit more info values: on:1 and off:0
+IGNORE_SECTIONS=("Application" "Runtime" "Instance" "Extra Data") 
+#IGNORE_SECTIONS=()  # uncomment this for "extra careful mode"
+
+#[Application] or [Runtime]
+#       Metadata for applications starts with an [Application] group,
+#       metadata for runtimes with a [Runtime] group.
+#[Instance]
+#       This group only appears in /.flatpak-info for a running app, and
+#       not in the metadata files written by application authors. It is
+#       filled in by Flatpak itself.
+#[Extra Data]
+#       This optional group may be present if the runtime or application
+#       uses extra data that gets downloaded separately. The data in this
+#       group gets merged into the repository summary, with the
+#       xa.extra-data-sources key.
+# source. https://www.man7.org/linux/man-pages/man5/flatpak-metadata.5.html
 
 # -----------------------------------------------------------------------------
-# OPEN TODOS:
+# check required dependencies 
 # -----------------------------------------------------------------------------
-# - replace crudini with something lighter
+MISSING_BIN=0
+for bin in date flatpak tail mktemp mkdir awk tee grep echo printf rm basename;do
+	type "$bin" >/dev/null 2>&1 || { echo "ERROR: missing $bin"; MISSING_BIN=1; }
+done
+if [ $MISSING_BIN -ne 0 ];then
+	echo "ERROR: aborting because of missing dependencies"
+fi
 
 # -----------------------------------------------------------------------------
 # Temp Files
@@ -25,6 +47,24 @@ DEBUG=0          # show a bit more info values: on:1 and off:0
 LOCAL=$(mktemp)
 REMOTE=$(mktemp)
 DIFF=$(mktemp)
+
+# -----------------------------------------------------------------------------
+# transform IGNORE_SECTIONS into a extended regex (grep -E) string
+# -----------------------------------------------------------------------------
+IGNORE_SECTIONS=$(printf "|%s" ${IGNORE_SECTIONS[@]}) # insert | before each 
+IGNORE_SECTIONS=${IGNORE_SECTIONS:1} # slice first | char
+
+# -----------------------------------------------------------------------------
+# define cleanup handler 
+# -----------------------------------------------------------------------------
+function cleanup {
+    rm -f $LOCAL $REMOTE $DIFF
+    echo "INFO: $(date +%F_%R) done"
+}
+# -----------------------------------------------------------------------------
+# register cleanup handler 
+# -----------------------------------------------------------------------------
+trap cleanup EXIT;
 
 # -----------------------------------------------------------------------------
 # define help to source some files 
@@ -42,56 +82,18 @@ function source_if_exists {
 }
 
 # -----------------------------------------------------------------------------
-# define cleanup handler 
-# -----------------------------------------------------------------------------
-function cleanup {
-    rm -f $LOCAL $REMOTE $DIFF
-    echo "INFO: $(date +%F_%R) done"
-}
-
-# -----------------------------------------------------------------------------
 # filter harmless metadata 
 # -----------------------------------------------------------------------------
 function filter_harmless() {
-    cat /dev/stdin | {
-        # ref. https://www.man7.org/linux/man-pages/man5/flatpak-metadata.5.html
-        declare -a harmless=("Extra Data" "Application" "Runtime" "Instance" )
-        while read line;do
-            isHarmless=0
-            ## now loop through the above array
-            for i in "${harmless[@]}";do
-                # check if line matches pattern
-                echo "$line" | grep "^\[ $i \] " >/dev/null
-                RET=$?
-                # 1 <=> no match => output
-                if [ $RET -eq 0 ];then
-                    isHarmless=1
-                    break;
-                fi
-            done
-            #echo $isHarmless $line
-            if [ $isHarmless -eq 0 ];then
-                echo $line
-            fi
-        done
-    }
+    cat /dev/stdin | grep -E -v "^\[($IGNORE_SECTIONS)\]"
 }
 
 # -----------------------------------------------------------------------------
-# register cleanup handler 
+# prefix each line with ini section
 # -----------------------------------------------------------------------------
-trap cleanup EXIT;
-
-# -----------------------------------------------------------------------------
-# check required dependencies 
-# -----------------------------------------------------------------------------
-MISSING_BIN=0
-for bin in flatpak tail mktemp mkdir crudini tee grep echo rm basename;do
-	type "$bin" >/dev/null 2>&1 || { echo "ERROR: missing $bin"; MISSING_BIN=1; }
-done
-if [ $MISSING_BIN -ne 0 ];then
-	echo "ERROR: aborting because of missing dependencies"
-fi
+function transform_ini() {
+    cat /dev/stdin | awk '/^\[.+\]$/ {grp=$line; next} /./ {print grp,$line}'
+}
 
 # -----------------------------------------------------------------------------
 # check extra dependencies
@@ -115,21 +117,19 @@ source_if_exists  /etc/profile
 # -----------------------------------------------------------------------------
 echo "INFO: $(date +%F_%R) started"
 
-
-flatpak remote-ls --updates --app --columns=application,origin | tail -n+1 | 
+flatpak remote-ls --updates --user --app --columns=application,origin | tail -n+1 | 
 {
-
     while read APPID ORIGIN; do
 
         # get local meta 
         flatpak --user info -m $APPID \
-            | crudini --get --format=lines - \
+            | transform_ini \
             | filter_harmless \
             |sort > $LOCAL
 
         # get remote meta
-        flatpak remote-info --show-metadata $ORIGIN $APPID \
-            | crudini --get --format=lines - \
+        flatpak --user remote-info --show-metadata $ORIGIN $APPID \
+            | transform_ini \
             | filter_harmless \
             | sort > $REMOTE
 
@@ -137,12 +137,16 @@ flatpak remote-ls --updates --app --columns=application,origin | tail -n+1 |
         diff -y -w -B  $LOCAL $REMOTE 2>&1 > $DIFF
         RET=$?
 
+        if [ $DEBUG -ne 0 ];then
+            cat $DIFF
+        fi
+
         # auto update or skip update and log+notify 
         if [ $RET -eq 0 ];then
             if [ $DEBUG -ne 0 ];then
                 echo "DEBUG: $APPID has no permission changes, auto updating"
             fi
-            flatpak update --noninteractive --app $APPID >/dev/null
+            flatpak update --user --noninteractive --app $APPID >/dev/null
          else
             MSG="INFO: $APPID has permission changes, resolve via 'flatpak --user update $APPID'"
             cat $DIFF
@@ -153,7 +157,6 @@ flatpak remote-ls --updates --app --columns=application,origin | tail -n+1 |
             fi
         fi
     done
-
 }
 # -----------------------------------------------------------------------------
 # E O F
