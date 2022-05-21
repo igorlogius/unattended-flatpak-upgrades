@@ -3,13 +3,26 @@
 # -----------------------------------------------------------------------------
 # DESCRIPTION: 
 # -----------------------------------------------------------------------------
-# auto updates flatpak apps which dont have remote permission changes so the 
-# user doenst have to worry about an app aquiring additional permissions without 
-# his knowlege and explicit consent
+# auto updates flatpak applications which dont have remote permission changes 
+# so the user doenst have to worry about an app aquiring additional permissions
+# without his knowlege and explicit consent. Optionaly also informs the user i
+# about outdated but still running/active flatpak applications, which might 
+# need a restart
+
+# -----------------------------------------------------------------------------
+# Contributions: 
+# -----------------------------------------------------------------------------
+# 
+# by: nolan1 (ref. https://github.com/nolanl ) 
+# - replace 'crudini' some 'awk' magic. 
+# - add detection and notification for outdated instances 
+#
+# -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
 # CONFIGURATION PARAMETERS: 
 # -----------------------------------------------------------------------------
+CHECK_OUTDATED=1  # check if there are active/running outdated instances 
 LOGFILE=$(basename ${BASH_SOURCE[0]}) # same name as script (no ext)
 LOGDIR=~/.logs   # will be created if necessary 
 DEBUG=0          # show a bit more info values: on:1 and off:0
@@ -34,7 +47,7 @@ IGNORE_SECTIONS=("Application" "Runtime" "Instance" "Extra Data")
 # check required dependencies 
 # -----------------------------------------------------------------------------
 MISSING_BIN=0
-for bin in date flatpak tail mktemp mkdir awk tee grep echo printf rm basename;do
+for bin in date flatpak tail head mktemp mkdir awk tee grep echo printf rm basename;do
 	type "$bin" >/dev/null 2>&1 || { echo "ERROR: missing $bin"; MISSING_BIN=1; }
 done
 if [ $MISSING_BIN -ne 0 ];then
@@ -115,10 +128,16 @@ source_if_exists  /etc/profile
 # -----------------------------------------------------------------------------
 # M A I N  
 # -----------------------------------------------------------------------------
+
 echo "INFO: $(date +%F_%R) started"
 
+# -----------------------------------------------------------------------------
+# Loop over the applications which have remote updates 
+# -----------------------------------------------------------------------------
 flatpak remote-ls --updates --user --app --columns=application,origin | tail -n+1 | 
 {
+    MSG_PERMCHANGE=""
+
     while read APPID ORIGIN; do
 
         # get local meta 
@@ -148,16 +167,51 @@ flatpak remote-ls --updates --user --app --columns=application,origin | tail -n+
             fi
             flatpak update --user --noninteractive --app $APPID >/dev/null
          else
-            MSG="INFO: $APPID has permission changes, resolve via 'flatpak --user update $APPID'"
+            echo "INFO: $APPID has permission changes, resolve via 'flatpak --user update $APPID'"
+            MSG_PERMCHANGE=" - $APPID\r\n$MSG_PERMCHANGE"
             cat $DIFF
             echo "$MSG"
-            if [ ! "$NOTIFY_SEND" = "" ];then 
-                # send notification
-                $NOTIFY_SEND "flatpak: $APPID" "$MSG"
-            fi
+
         fi
     done
+
+    # Send notification
+    if [ ! "$MSG_PERMCHANGE" = "" ];then
+        MSG="upgradable flatpakts with permission changes (verify)\r\n$MSG_PERMCHANGE"
+        if [ ! "$NOTIFY_SEND" = "" ];then 
+            $NOTIFY_SEND "flatpak-unattended-upgrades" "$MSG"
+        fi
+    fi
 }
+
+if [ $CHECK_OUTDATED -eq 1 ];then
+    # -----------------------------------------------------------------------------
+    # Loop over the running instances and check if those might be outdated
+    # Note: we need sort -u since packages can have multiple instances running 
+    #       but the commit seems to be the same example: md.obsidian.Obsidian
+    # -----------------------------------------------------------------------------
+    flatpak ps --columns=application,commit | sort -u | tail -n+1 | \
+    {
+        MSG_OUTDATED=""
+
+        while read APPID COMMIT; do
+            RUNNING=$(flatpak info --user --show-commit $APPID | head -c 12)
+            if [ ! "$RUNNING" = "$COMMIT" ];then
+                echo "INFO: Outdated instance(s) of '$APPID' running"
+                MSG_OUTDATED=" - $APPID\r\n$MSG_OUTDATED"
+            fi
+        done
+
+        # Send notification
+        if [ ! "$MSG_OUTDATED" = "" ];then
+            MSG="running outdated flatpaks (restart)\r\n$MSG_OUTDATED"
+            if [ ! "$NOTIFY_SEND" = "" ];then 
+                $NOTIFY_SEND "flatpak-unattended-upgrades" "$MSG"
+            fi
+        fi
+    }
+fi
+
 # -----------------------------------------------------------------------------
 # E O F
 # -----------------------------------------------------------------------------
