@@ -177,14 +177,21 @@ flatpak remote-ls --updates --user --app --columns=application,origin | tail -n+
 
     # Send notification
     if [ ! "$MSG_PERMCHANGE" = "" ];then
-        MSG="upgradable flatpakts with permission changes (verify)\r\n$MSG_PERMCHANGE"
+        MSG="upgradable flatpaks with permission changes (verify)\r\n$MSG_PERMCHANGE"
         if [ ! "$NOTIFY_SEND" = "" ];then 
             $NOTIFY_SEND "flatpak-unattended-upgrades" "$MSG"
+        fi
+    else
+        if [ $DEBUG -ne 0 ];then
+            echo "DEBUG: no upgradable flatpaks with permission changes found"
         fi
     fi
 }
 
 if [ $CHECK_OUTDATED -eq 1 ];then
+    if [ $DEBUG -ne 0 ];then
+       echo "DEBUG: checking for outdated running instances"
+    fi
     # -----------------------------------------------------------------------------
     # Loop over the running instances and check if those might be outdated
     # Note: we need sort -u since packages can have multiple instances running 
@@ -208,8 +215,16 @@ if [ $CHECK_OUTDATED -eq 1 ];then
             if [ ! "$NOTIFY_SEND" = "" ];then 
                 $NOTIFY_SEND "flatpak-unattended-upgrades" "$MSG"
             fi
+        else
+            if [ $DEBUG -ne 0 ];then
+                echo "DEBUG: no running outdated instances detected"
+            fi
         fi
     }
+else
+    if [ $DEBUG -ne 0 ];then
+       echo "DEBUG: Skipping check for outdated running instances"
+    fi
 fi
 
 # -----------------------------------------------------------------------------
