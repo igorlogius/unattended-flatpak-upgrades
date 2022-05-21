@@ -14,8 +14,8 @@
 # -----------------------------------------------------------------------------
 # 
 # by: nolan1 (ref. https://github.com/nolanl ) 
-# - replace 'crudini' some 'awk' magic. 
-# - add detection and notification for outdated instances 
+# - replace 'crudini' with some 'awk' magic
+# - detection and notification for outdated instances 
 #
 # -----------------------------------------------------------------------------
 
